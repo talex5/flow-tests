@@ -65,6 +65,17 @@ let create_data () = object (_ : flow)
       Lwt_result.fail `Eof
     )
 
+  method! read =
+    let avail = Cstruct.len Test_data.message - read in
+    if avail > 0 then (
+      let len = min Test_data.chunk_size avail in
+      let chunk = Cstruct.sub Test_data.message read len in
+      read <- read + len;
+      Lwt_result.return chunk
+    ) else (
+      Lwt_result.fail `Eof
+    )
+
   method write buf =
     let len = Cstruct.len buf in
     Cstruct.blit buf 0 written wrote len;

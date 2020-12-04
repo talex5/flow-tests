@@ -77,6 +77,17 @@ let rec test_flow_oo flow =
     | Ok () -> test_flow_oo flow
     | Error (`Msg m) -> failwith m
 
+(* Approach 5 : Using the read call for zero-copy *)
+
+let rec test_flow_oo2 flow =
+  Flow_oo.read flow >>= function
+  | Error `Eof -> Lwt.return_unit
+  | Error (`Msg m) -> failwith m
+  | Ok buf ->
+    Flow_oo.write flow buf >>= function
+    | Ok () -> test_flow_oo2 flow
+    | Error (`Msg m) -> failwith m
+
 (* Check they work *)
 
 let () =
@@ -96,6 +107,10 @@ let () =
     print_endline "Flow_oo";
     let flow = Flow_oo.create_data () in
     test_flow_oo flow >>= fun () ->
+    Flow_oo.close flow >|= Result.get_ok >>= fun () ->
+    print_endline "Flow_oo2";
+    let flow = Flow_oo.create_data () in
+    test_flow_oo2 flow >>= fun () ->
     Flow_oo.close flow >|= Result.get_ok
   end
 
@@ -112,4 +127,5 @@ let () =
       Bench.Test.create ~name:"conduit_data" (fun () -> Conduit_data.create () >>= test_conduit);
       Bench.Test.create ~name:"conduit_oo_data" (fun () -> test_conduit_oo (Conduit_oo.create_data ()));
       Bench.Test.create ~name:"oo_data" (fun () -> test_flow_oo (Flow_oo.create_data ()));
+      Bench.Test.create ~name:"oo_data2" (fun () -> test_flow_oo2 (Flow_oo.create_data ()));
     ])
