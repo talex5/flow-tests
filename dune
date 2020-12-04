@@ -1,0 +1,3 @@
+(executable
+ (name test)
+ (libraries core core_bench mirage-flow conduit-lwt))
