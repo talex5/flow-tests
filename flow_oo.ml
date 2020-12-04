@@ -1,49 +1,52 @@
+open Lwt.Infix
+
 type 'a ty = ..
 
+type flow_error = ..
+
+type error = flow_error * (Format.formatter -> unit)
+
+type 'a or_error_lwt = ('a, [`Flow of error]) Lwt_result.t
+
 class virtual reader = object (self)
-  method virtual read_into : Cstruct.t -> (int, [`Eof | `Msg of string ]) Lwt_result.t
-  method read =
+  method virtual read_into : Cstruct.t -> [`Input of int | `Eof] or_error_lwt
+
+  method read : [`Data of Cstruct.t | `Eof] or_error_lwt =
     let buf = Cstruct.create 4096 in
-    self#read_into buf |> Lwt_result.map (fun n -> Cstruct.sub buf 0 n)
+    self#read_into buf >|= function
+    | Ok (`Input n) -> Ok (`Data (Cstruct.sub buf 0 n))
+    | Ok `Eof | Error _ as x -> x
 end
 
 class virtual writer = object
-  method virtual write : Cstruct.t -> (unit, [`Msg of string ]) Lwt_result.t 
+  method virtual write : Cstruct.t -> unit or_error_lwt
 end
 
 class virtual flow = object
   inherit reader
   inherit writer
-  method virtual close : (unit, [`Msg of string ]) Lwt_result.t
+  method virtual close : unit or_error_lwt
   method cast : 'a. 'a ty -> 'a option = fun _ -> None
 end
 
 let read_into (t:#reader) buf =
-  (t#read_into buf
-   : (int, [`Eof | `Msg of string ]) Lwt_result.t
-   :> (int, [> `Eof | `Msg of string ]) Lwt_result.t)
+  (t#read_into buf : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
 
 let read (t:#reader) =
-  (t#read
-   : (Cstruct.t, [`Eof | `Msg of string ]) Lwt_result.t
-   :> (Cstruct.t, [> `Eof | `Msg of string ]) Lwt_result.t)
+  (t#read : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
 
 let write (t:#writer) buf =
-  (t#write buf
-   : (unit, [`Msg of string ]) Lwt_result.t
-   :> (unit, [> `Msg of string ]) Lwt_result.t)
+  (t#write buf : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
 
 let close (t:#flow) =
-  (t#close
-   : (unit, [`Msg of string ]) Lwt_result.t
-   :> (unit, [> `Msg of string ]) Lwt_result.t)
+  (t#close : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
 
 let cast (t:#flow) = t#cast
 
 let null = object (_ : flow)
   inherit flow
-  method! read = Lwt_result.fail `Eof
-  method read_into _buf = Lwt_result.fail `Eof
+  method! read = Lwt_result.return `Eof
+  method read_into _buf = Lwt_result.return `Eof
   method write _buf = Lwt_result.return ()
   method close = Fmt.invalid_arg "close null!"
 end
@@ -61,9 +64,9 @@ let create_data () = object (_ : flow)
     if len > 0 then (
       Cstruct.blit Test_data.message read buf 0 len;
       read <- read + len;
-      Lwt_result.return len
+      Lwt_result.return (`Input len)
     ) else (
-      Lwt_result.fail `Eof
+      Lwt_result.return `Eof
     )
 
   method! read =
@@ -72,9 +75,9 @@ let create_data () = object (_ : flow)
       let len = min Test_data.chunk_size avail in
       let chunk = Cstruct.sub Test_data.message read len in
       read <- read + len;
-      Lwt_result.return chunk
+      Lwt_result.return (`Data chunk)
     ) else (
-      Lwt_result.fail `Eof
+      Lwt_result.return `Eof
     )
 
   method write buf =
@@ -87,3 +90,11 @@ let create_data () = object (_ : flow)
     assert (Cstruct.equal written Test_data.message);
     Lwt_result.return ()
 end
+
+let pp_error f (_, pp) = pp f
+
+type flow_error += Msg
+
+let failwith fmt =
+  fmt |> Fmt.kstrf @@ fun msg ->
+  (Msg, fun f -> Fmt.string f msg)

@@ -5,6 +5,25 @@ We have several different flow APIs in Mirage (e.g. mirage-flow and Conduit 3). 
 3. Conduit OO, an API in the style of Conduit 3 using objects
 4. Flow OO, another OO API which I just made up
 
+# Contents
+
+<!-- vim-markdown-toc GFM -->
+
+* [Generic copy function](#generic-copy-function)
+	* [Mirage-flow copy](#mirage-flow-copy)
+	* [Conduit 3](#conduit-3)
+	* [Conduit-style OO](#conduit-style-oo)
+	* [Flow OO](#flow-oo)
+* [Null device](#null-device)
+	* [Mirage-flow](#mirage-flow)
+	* [Conduit 3](#conduit-3-1)
+	* [Conduit-style OO](#conduit-style-oo-1)
+	* [Flow OO](#flow-oo-1)
+* [Benchmarks](#benchmarks)
+* [Flow API](#flow-api)
+
+<!-- vim-markdown-toc -->
+
 # Generic copy function
 
 For each of these, I wrote a function that simply copies its input to its output.
@@ -15,77 +34,74 @@ They are:
 
 ```ocaml
 module Test(F : Mirage_flow.S) = struct
-  let rec test flow =
+  let rec copy flow =
     F.read flow >>= function
-    | Ok `Eof -> Lwt.return_unit
-    | Error e -> Fmt.failwith "%a" F.pp_error e
+    | Ok `Eof -> Lwt_result.return ()
+    | Error e -> Lwt_result.fail (`Read e)
     | Ok (`Data buf) ->
       F.write flow buf >>= function
-      | Error e -> Fmt.failwith "%a" F.pp_write_error e
-      | Ok () -> test flow
+      | Error e -> Lwt_result.fail (`Write e)
+      | Ok () -> copy flow
 end
 ```
 
-Note: For mirage-flow, we need to apply the functor whenever we use this, which the other schemes avoid.
+Notes:
+- For mirage-flow, we need to apply the functor whenever we use this, which the other schemes avoid.
+- The error types are incompatible, so we have to handle them separately.
+
 This is the fastest option, since there's no dynamic dispatch.
 It's mostly here to establish a base-line for performance.
 
 ## Conduit 3
 
 ```ocaml
-let rec test_conduit flow =
-  Conduit_lwt.recv flow buf >>= function
-  | Error (`Msg m) -> failwith m
-  | Error `Not_found -> assert false
-  | Ok `End_of_flow -> Lwt.return_unit
-  | Ok (`Input n) ->
+let rec copy_conduit flow =
+  Conduit_lwt.recv flow buf >>!= function
+  | `End_of_flow -> Lwt_result.return ()
+  | `Input n ->
     let rec aux i =
-      if i = n then test_conduit flow
+      if i = n then copy_conduit flow
       else (
-        Conduit_lwt.send flow (Cstruct.sub buf i (n - i)) >>= function
-        | Ok j -> aux (i + j)
-        | Error `Not_found -> assert false
-        | Error (`Msg m) -> failwith m
+        Conduit_lwt.send flow (Cstruct.sub buf i (n - i)) >>!= fun j ->
+        aux (i + j)
       )
     in
     aux 0
 ```
 
-Conduit 3 requires us to consider the possibilty of partial writes, which is annoying.
-It also makes us handle the `Not_found` error, which doesn't make much sense for reads and writes.
+Notes:
+- Conduit 3 requires us to consider the possibilty of partial writes, which is annoying.
+- Conduit 3 compresses all the errors into just `Msg` or `Not_found`,
+  so you can't match on protocol-specific errors.
 
 ## Conduit-style OO
 
 ```ocaml
-let rec test_conduit_oo flow =
-  Conduit_oo.recv flow buf >>= function
-  | Error (`Msg m) -> failwith m
-  | Ok `End_of_flow -> Lwt.return_unit
-  | Ok (`Input n) ->
+let rec copy_conduit_oo flow =
+  Conduit_oo.recv flow buf >>!= function
+  | `End_of_flow -> Lwt_result.return ()
+  | `Input n ->
     let rec aux i =
-      if i = n then test_conduit_oo flow
+      if i = n then copy_conduit_oo flow
       else (
-        Conduit_oo.send flow (Cstruct.sub buf i (n - i)) >>= function
-        | Ok j -> aux (i + j)
-        | Error (`Msg m) -> failwith m
+        Conduit_oo.send flow (Cstruct.sub buf i (n - i)) >>!= fun j ->
+        aux (i + j)
       )
     in
     aux 0
 ```
 
-This looks much like using Conduit to the user. I did remove the `Not_found` errors though.
+Although using objects internally, to the user of a flow it looks identical to Conduit.
 
 ## Flow OO
 
 ```ocaml
-let rec test_flow_oo flow =
-  Flow_oo.read_into flow buf >>= function
-  | Error (`Msg m) -> failwith m
-  | Error `Eof -> Lwt.return_unit
-  | Ok n ->
-    Flow_oo.write flow (Cstruct.sub buf 0 n) >>= function
-    | Error (`Msg m) -> failwith m
-    | Ok () -> test_flow_oo flow
+let rec copy_flow_oo flow =
+  Flow_oo.read_into flow buf >>!= function
+  | `Eof -> Lwt_result.return ()
+  | `Input n ->
+    Flow_oo.write flow (Cstruct.sub buf 0 n) >>!= fun () ->
+    copy_flow_oo flow
 ```
 
 This is my preferred API. Like Conduit, we read into a buffer.
@@ -96,14 +112,12 @@ if the implementation doesn't provide a more efficient version.
 Here's an alternative version using that:
 
 ```ocaml
-let rec test_flow_oo2 flow =
-  Flow_oo.read flow >>= function
-  | Error `Eof -> Lwt.return_unit
-  | Error (`Msg m) -> failwith m
-  | Ok buf ->
-    Flow_oo.write flow buf >>= function
-    | Error (`Msg m) -> failwith m
-    | Ok () -> test_flow_oo2 flow
+let rec copy_flow_oo2 flow =
+  Flow_oo.read flow >>!= function
+  | `Eof -> Lwt_result.return ()
+  | `Data buf ->
+    Flow_oo.write flow buf >>!= fun () ->
+    copy_flow_oo2 flow
 ```
 
 # Null device
@@ -178,22 +192,20 @@ so I added a similar feature here.
 ```ocaml
 let null = object (_ : flow)
   inherit flow
-  method! read = Lwt_result.fail `Eof
-  method read_into _buf = Lwt_result.fail `Eof
+  method! read = Lwt_result.return `Eof
+  method read_into _buf = Lwt_result.return `Eof
   method write _buf = Lwt_result.return ()
   method close = Fmt.invalid_arg "close null!"
 end
 ```
 
 This uses some inheritance to get a default `cast` that doesn't allow casting to anything.
-We could also have inherited the default `read`, but for the null device we don't need a buffer so we can save allocating it.
+We could have written it explicitly as above, but using `inherit` allows adding more methods later without breaking existing code.
+We would also have inherited the default `read`, but for the null device we don't need a buffer so we can save allocating it.
 
 Notes:
-- I also made `Eof` an error here.
-  It's not exactly an error, but this does avoid an extra allocation in the
-  common case where you return `Ok data` rather than ``Ok (`Data data)``.
-- I've never found a use for resuming from partial writes, so I used the mirage-flow approach of just reporting
-  a generic error in that case.
+- I've never found a use for resuming from partial writes, so I used the mirage-flow approach of returning `()`
+  from writes. You can return an error value containing the partial write information if desired.
 
 # Benchmarks
 
@@ -204,11 +216,11 @@ Here are the results on my machine for the null flows:
 ┌──────────────────┬──────────┬─────────┬────────────┐
 │ Name             │ Time/Run │ mWd/Run │ Percentage │
 ├──────────────────┼──────────┼─────────┼────────────┤
-│ mirage_flow_null │   9.09ns │  25.00w │     29.58% │
-│ conduit_null     │  30.74ns │  55.00w │    100.00% │
-│ conduit_oo_null  │  12.26ns │  29.00w │     39.89% │
-│ oo_null          │  11.65ns │  24.00w │     37.90% │
-│ oo_null2         │  10.25ns │  24.00w │     33.33% │
+│ mirage_flow_null │  20.33ns │  52.00w │     48.97% │
+│ conduit_null     │  41.51ns │  82.00w │    100.00% │
+│ conduit_oo_null  │  21.99ns │  56.00w │     52.98% │
+│ oo_null          │  20.99ns │  51.00w │     50.56% │
+│ oo_null2         │  20.66ns │  51.00w │     49.77% │
 └──────────────────┴──────────┴─────────┴────────────┘
 ```
 
@@ -216,21 +228,25 @@ In summary, Conduit 3 is the slowest by some margin.
 The OO APIs give you dynamic dispatch with very little overhead, even in the trivial null case.
 For real flows we'd expect dealing with the data to take more time and the overhead to matter less.
 
+Note: I originally had the copy code throwing exceptions.
+      I've switched to using `Lwt_result` as that's probably more realistic.
+      Using `Lwt_result` adds some overhead to all the times,
+      which helps Conduit a bit, but the pattern is the same.
+
 Reading from the data flows produces a 4096 test message in 10 byte chunks.
 Writing to it just records the data.
 Closing it checks that the received data matches the test message.
-
-The results with some test data are:
+The results with test data are:
 
 ```
 ┌──────────────────┬──────────┬─────────┬──────────┬──────────┬────────────┐
 │ Name             │ Time/Run │ mWd/Run │ mjWd/Run │ Prom/Run │ Percentage │
 ├──────────────────┼──────────┼─────────┼──────────┼──────────┼────────────┤
-│ mirage_flow_data │  12.63us │ 24.23kw │    2.62w │    2.62w │     34.34% │
-│ conduit_data     │  36.77us │ 52.43kw │    7.33w │    7.33w │    100.00% │
-│ conduit_oo_data  │  20.65us │ 31.06kw │    6.54w │    6.54w │     56.16% │
-│ oo_data          │  19.87us │ 23.26kw │    6.37w │    6.37w │     54.05% │
-│ oo_data2         │  15.97us │ 23.26kw │    6.46w │    6.46w │     43.45% │
+│ mirage_flow_data │  12.57us │ 23.85kw │    2.88w │    2.88w │     34.09% │
+│ conduit_data     │  36.88us │ 55.74kw │    7.87w │    7.87w │    100.00% │
+│ conduit_oo_data  │  21.42us │ 34.36kw │    7.41w │    7.41w │     58.09% │
+│ oo_data          │  21.49us │ 27.80kw │    7.68w │    7.68w │     58.29% │
+│ oo_data2         │  17.21us │ 27.80kw │    7.99w │    7.99w │     46.66% │
 └──────────────────┴──────────┴─────────┴──────────┴──────────┴────────────┘
 ```
 
@@ -275,3 +291,14 @@ Then you can check whether a `flow` can be upgraded to the `key_flow` interface:
   | Some flow -> new_key flow
   | None -> ()	(* Not supported *)
 ```
+
+The flow API also uses an open type for errors:
+
+```ocaml
+type flow_error = ..
+type error = flow_error * (Format.formatter -> unit)
+val pp_error : error Fmt.t
+```
+
+This means that you can add your own concrete error types and then match on them if desired,
+or fall back to using `pp_error` to just print them.
