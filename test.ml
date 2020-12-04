@@ -69,12 +69,12 @@ let rec test_conduit_oo flow =
 
 let rec test_flow_oo flow =
   Flow_oo.read_into flow buf >>= function
-  | Error `Eof -> Lwt.return_unit
   | Error (`Msg m) -> failwith m
+  | Error `Eof -> Lwt.return_unit
   | Ok n ->
     Flow_oo.write flow (Cstruct.sub buf 0 n) >>= function
-    | Ok () -> test_flow_oo flow
     | Error (`Msg m) -> failwith m
+    | Ok () -> test_flow_oo flow
 
 (* Approach 5 : Using the read call for zero-copy *)
 
