@@ -52,15 +52,14 @@ let rec test_conduit flow =
 
 let rec test_conduit_oo flow =
   Conduit_oo.recv flow buf >>= function
-  | Ok `End_of_flow -> Lwt.return_unit
   | Error (`Msg m) -> failwith m
+  | Ok `End_of_flow -> Lwt.return_unit
   | Ok (`Input n) ->
     let rec aux i =
       if i = n then test_conduit_oo flow
       else (
         Conduit_oo.send flow (Cstruct.sub buf i (n - i)) >>= function
         | Ok j -> aux (i + j)
-        | Error `Not_found -> assert false    (* ?? *)
         | Error (`Msg m) -> failwith m
       )
     in

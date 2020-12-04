@@ -67,7 +67,6 @@ let rec test_conduit_oo flow =
       else (
         Conduit_oo.send flow (Cstruct.sub buf i (n - i)) >>= function
         | Ok j -> aux (i + j)
-        | Error `Not_found -> assert false
         | Error (`Msg m) -> failwith m
       )
     in
