@@ -93,6 +93,19 @@ However, it also provides a mirage-flow-style `read` method.
 It uses inheritance to make this default to reading into a fresh 4096 byte buffer
 if the implementation doesn't provide a more efficient version.
 
+Here's an alternative version using that:
+
+```ocaml
+let rec test_flow_oo2 flow =
+  Flow_oo.read flow >>= function
+  | Error `Eof -> Lwt.return_unit
+  | Error (`Msg m) -> failwith m
+  | Ok buf ->
+    Flow_oo.write flow buf >>= function
+    | Error (`Msg m) -> failwith m
+    | Ok () -> test_flow_oo2 flow
+```
+
 # Null device
 
 For each API, I implemented a `/dev/null` style device. Reads always return end-of-file, and writes discard the data.
@@ -165,16 +178,22 @@ so I added a similar feature here.
 ```ocaml
 let null = object (_ : flow)
   inherit flow
+  method! read = Lwt_result.fail `Eof
   method read_into _buf = Lwt_result.fail `Eof
   method write _buf = Lwt_result.return ()
   method close = Fmt.invalid_arg "close null!"
 end
 ```
 
-This uses some inheritance to get a free `read` method and a default `cast` that doesn't allow casting to anything.
-Note: I also made `Eof` an error here.
-It's not exactly an error, but it does avoid an extra allocation in the common case where you return `Ok data` rather
-than ``Ok (`Data data)``.
+This uses some inheritance to get a default `cast` that doesn't allow casting to anything.
+We could also have inherited the default `read`, but for the null device we don't need a buffer so we can save allocating it.
+
+Notes:
+- I also made `Eof` an error here.
+  It's not exactly an error, but this does avoid an extra allocation in the
+  common case where you return `Ok data` rather than ``Ok (`Data data)``.
+- I've never found a use for resuming from partial writes, so I used the mirage-flow approach of just reporting
+  a generic error in that case.
 
 # Benchmarks
 
@@ -185,10 +204,11 @@ Here are the results on my machine for the null flows:
 ┌──────────────────┬──────────┬─────────┬────────────┐
 │ Name             │ Time/Run │ mWd/Run │ Percentage │
 ├──────────────────┼──────────┼─────────┼────────────┤
-│ mirage_flow_null │   9.29ns │  25.00w │     29.11% │
-│ conduit_null     │  31.92ns │  55.00w │    100.00% │
-│ conduit_oo_null  │  12.29ns │  29.00w │     38.51% │
-│ oo_null          │  11.49ns │  24.00w │     35.99% │
+│ mirage_flow_null │   9.09ns │  25.00w │     29.58% │
+│ conduit_null     │  30.74ns │  55.00w │    100.00% │
+│ conduit_oo_null  │  12.26ns │  29.00w │     39.89% │
+│ oo_null          │  11.65ns │  24.00w │     37.90% │
+│ oo_null2         │  10.25ns │  24.00w │     33.33% │
 └──────────────────┴──────────┴─────────┴────────────┘
 ```
 

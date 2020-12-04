@@ -42,6 +42,7 @@ let cast (t:#flow) = t#cast
 
 let null = object (_ : flow)
   inherit flow
+  method! read = Lwt_result.fail `Eof
   method read_into _buf = Lwt_result.fail `Eof
   method write _buf = Lwt_result.return ()
   method close = Fmt.invalid_arg "close null!"

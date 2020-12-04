@@ -84,8 +84,8 @@ let rec test_flow_oo2 flow =
   | Error (`Msg m) -> failwith m
   | Ok buf ->
     Flow_oo.write flow buf >>= function
-    | Ok () -> test_flow_oo2 flow
     | Error (`Msg m) -> failwith m
+    | Ok () -> test_flow_oo2 flow
 
 (* Check they work *)
 
@@ -121,6 +121,7 @@ let () =
       Bench.Test.create ~name:"conduit_null" (fun () -> test_conduit conduit_null);
       Bench.Test.create ~name:"conduit_oo_null" (fun () -> test_conduit_oo Conduit_oo.null);
       Bench.Test.create ~name:"oo_null" (fun () -> test_flow_oo Flow_oo.null);
+      Bench.Test.create ~name:"oo_null2" (fun () -> test_flow_oo2 Flow_oo.null);
 
       Bench.Test.create ~name:"mirage_flow_data" (fun () -> Test_mirage_flow_data.test (Mirage_flow_data.create ()));
       Bench.Test.create ~name:"conduit_data" (fun () -> Conduit_data.create () >>= test_conduit);
