@@ -125,11 +125,12 @@ let () =
     print_endline "Flow_oo";
     let flow = Flow_oo.create_data () in
     test_flow_oo flow >>= fun () ->
-    Flow_oo.close flow >|= Result.get_ok >>= fun () ->
+    flow#close;
     print_endline "Flow_oo2";
     let flow = Flow_oo.create_data () in
     test_flow_oo2 flow >>= fun () ->
-    Flow_oo.close flow >|= Result.get_ok
+    flow#close;
+    Lwt.return_unit
   end
 
 (* Benchmark *)

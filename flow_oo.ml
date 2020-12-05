@@ -25,7 +25,6 @@ end
 class virtual flow = object
   inherit reader
   inherit writer
-  method virtual close : unit or_error_lwt
   method cast : 'a. 'a ty -> 'a option = fun _ -> None
 end
 
@@ -38,9 +37,6 @@ let read (t:#reader) =
 let write (t:#writer) buf =
   (t#write buf : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
 
-let close (t:#flow) =
-  (t#close : 'a or_error_lwt :> ('a, [> `Flow of error]) Lwt_result.t)
-
 let cast (t:#flow) = t#cast
 
 let null = object (_ : flow)
@@ -48,10 +44,9 @@ let null = object (_ : flow)
   method! read = Lwt_result.return `Eof
   method read_into _buf = Lwt_result.return `Eof
   method write _buf = Lwt_result.return ()
-  method close = Fmt.invalid_arg "close null!"
 end
 
-let create_data () = object (_ : flow)
+let create_data () = object (_ : #flow)
   inherit flow
 
   val mutable read = 0
@@ -87,8 +82,7 @@ let create_data () = object (_ : flow)
     Lwt_result.return ()
 
   method close =
-    assert (Cstruct.equal written Test_data.message);
-    Lwt_result.return ()
+    assert (Cstruct.equal written Test_data.message)
 end
 
 let pp_error f (_, pp) = pp f

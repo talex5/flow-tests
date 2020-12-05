@@ -19,14 +19,12 @@ end
 class virtual flow : object
   inherit reader
   inherit writer
-  method virtual close : unit or_error_lwt
   method cast : 'a. 'a ty -> 'a option
 end
 
 val read_into : #reader -> Cstruct.t -> ([`Input of int | `Eof], [> `Flow of error]) Lwt_result.t
 val read      : #reader -> ([`Data of Cstruct.t | `Eof], [> `Flow of error]) Lwt_result.t
 val write     : #writer -> Cstruct.t -> (unit, [> `Flow of error]) Lwt_result.t
-val close     : #flow -> (unit, [> `Flow of error]) Lwt_result.t
 val cast      : #flow -> 'a ty -> 'a option
 
 val null : flow
@@ -35,5 +33,4 @@ val pp_error : error Fmt.t
 
 val failwith : ('a, Format.formatter, unit, error) format4 -> 'a
 
-(* Test data *)
-val create_data : unit -> flow
+val create_data : unit -> < flow; close : unit >

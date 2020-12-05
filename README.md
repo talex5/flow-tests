@@ -24,6 +24,7 @@ We have several different flow APIs in Mirage (e.g. mirage-flow and Conduit 3). 
 	* [Restricting the operations](#restricting-the-operations)
 	* [Extending the operations](#extending-the-operations)
 	* [Custom errors](#custom-errors)
+	* [Custom close APIs](#custom-close-apis)
 
 <!-- vim-markdown-toc -->
 
@@ -198,7 +199,6 @@ let null = object (_ : flow)
   method! read = Lwt_result.return `Eof
   method read_into _buf = Lwt_result.return `Eof
   method write _buf = Lwt_result.return ()
-  method close = Fmt.invalid_arg "close null!"
 end
 ```
 
@@ -209,6 +209,8 @@ We would also have inherited the default `read`, but for the null device we don'
 Notes:
 - I've never found a use for resuming from partial writes, so I used the mirage-flow approach of returning `()`
   from writes. You can return an error value containing the partial write information if desired.
+- I removed the `close` method from the `flow` type, eliminating the fake close operation needed with the other APIs.
+  See the notes at the end for details.
 
 # Benchmarks
 
@@ -276,7 +278,7 @@ val read : #reader -> ([`Data of Cstruct.t | `Eof], [> `Flow of error]) Lwt_resu
 
 This means you could also make one-way streams and reuse parts of
 the API. Functions consuming flows can indicate whether they will read, write
-or do both by taking an argument of type `#reader`, `#writer`, or `#flow`.
+or do both by taking an argument of type `#reader`, `#writer` or `#flow`.
 
 ## Extending the operations
 
@@ -319,3 +321,18 @@ val pp_error : error Fmt.t
 
 This means that you can add your own concrete error types and then match on them if desired,
 or fall back to using `pp_error` to just print them.
+
+## Custom close APIs
+
+As an experiment, the flow API does not include a close method by default.
+Instead, each flow's constructor will include some means of closing it, which
+can depend on the flow. For example:
+
+- The constructor can take a `Lwt_switch` to limit the flow's lifetime.
+- The constructor could return a `close` function along with the flow.
+- The flow can be extended to have a `close` method.
+- A singleton flow (such as `null`) might not provide any way to close itself.
+
+This also makes the lifecycle of a flow more obvious: a generic flow function is not expected to close the flow
+itself (its caller should handle that). It also allows different closing APIs (for example, synchronous or not,
+able to return errors or not).
