@@ -21,6 +21,9 @@ We have several different flow APIs in Mirage (e.g. mirage-flow and Conduit 3). 
 	* [Flow OO](#flow-oo-1)
 * [Benchmarks](#benchmarks)
 * [Flow API](#flow-api)
+	* [Restricting the operations](#restricting-the-operations)
+	* [Extending the operations](#extending-the-operations)
+	* [Custom errors](#custom-errors)
 
 <!-- vim-markdown-toc -->
 
@@ -139,7 +142,7 @@ type flow = unit
 let read () = Lwt_result.return `Eof
 let write () _buf = Lwt_result.return ()
 let writev () _bufs = Lwt_result.return ()
-let close () = Fmt.invalid_arg
+let close () = Fmt.invalid_arg "close null!"
 ```
 
 Pretty straight-forward.
@@ -233,7 +236,7 @@ Note: I originally had the copy code throwing exceptions.
       Using `Lwt_result` adds some overhead to all the times,
       which helps Conduit a bit, but the pattern is the same.
 
-Reading from the data flows produces a 4096 test message in 10 byte chunks.
+Reading from the data flows produces a 4096 byte test message in 10 byte chunks.
 Writing to it just records the data.
 Closing it checks that the received data matches the test message.
 The results with test data are:
@@ -259,13 +262,25 @@ it's not very realistic.
 # Flow API
 
 The public API for the OO flow system is in `flow_oo.mli`.
-It has a couple of other interesting features.
-First, the read functions (for example) are only defined to require an object
-with the read methods, so you could also make one-way streams and reuse parts of
-the API. Functions consuming flows can indicate whether they will read, write
-or do both.
+It has a few other interesting features...
 
-It is also possible to check for extra features both statically and dynamically.
+## Restricting the operations
+
+The read functions (for example) are only defined to require an object
+with the read methods, e.g.
+
+```ocaml
+val read_into : #reader -> Cstruct.t -> ([`Input of int | `Eof], [> `Flow of error]) Lwt_result.t
+val read : #reader -> ([`Data of Cstruct.t | `Eof], [> `Flow of error]) Lwt_result.t
+```
+
+This means you could also make one-way streams and reuse parts of
+the API. Functions consuming flows can indicate whether they will read, write
+or do both by taking an argument of type `#reader`, `#writer`, or `#flow`.
+
+## Extending the operations
+
+It is possible to check for extra features both statically and dynamically.
 For example, if you need be able to change keys, you could define an extension of `flow`
 like this:
 
@@ -292,7 +307,9 @@ Then you can check whether a `flow` can be upgraded to the `key_flow` interface:
   | None -> ()	(* Not supported *)
 ```
 
-The flow API also uses an open type for errors:
+## Custom errors
+
+The flow API uses an open type for errors:
 
 ```ocaml
 type flow_error = ..
