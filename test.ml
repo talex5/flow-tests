@@ -58,6 +58,30 @@ let test_conduit flow =
   | Error `Not_found -> assert false   (* Can't happen *)
   | Error (`Msg m) -> failwith m
 
+let copy_conduit_impl (Conduit_lwt.Flow (flow, (module F))) =
+  let rec loop () =
+    F.recv flow buf >>!= function
+    | `End_of_flow -> Lwt_result.return ()
+    | `Input n ->
+      let rec aux i =
+        if i = n then loop ()
+        else (
+          F.send flow (Cstruct.sub buf i (n - i)) >>!= fun j ->
+          aux (i + j)
+        )
+      in
+      aux 0
+  in
+  loop () >|= function
+  | Ok () -> Ok ()
+  | Error e -> Error (`Msg (Fmt.to_to_string F.pp_error e))
+
+(* Wrapping a Conduit FLOW with an object *)
+let test_conduit_impl pack =
+  copy_conduit_impl pack >|= function
+  | Ok () -> ()
+  | Error (`Msg m) -> failwith m
+
 (* Approach 3 : An OO interface based on Conduit 3's API *)
 
 let rec copy_conduit_oo flow =
@@ -110,18 +134,35 @@ let test_flow_oo2 flow =
 
 let () =
   Lwt_main.run begin
+    (* Mirage flow *)
     print_endline "Mirage_flow_data";
     let flow = Mirage_flow_data.create () in
     Test_mirage_flow_data.test flow >>= fun () ->
     Mirage_flow_data.close flow >>= fun () ->
+    (* Conduit *)
     print_endline "Conduit";
     Conduit_data.create () >>= fun flow ->
     test_conduit flow >>= fun () ->
     Conduit_lwt.close flow >|= Result.get_ok >>= fun () ->
+    print_endline "Conduit impl";
+    Conduit_data.create_impl () >>= fun pack ->
+    test_conduit_impl pack >>= fun () ->
+    let Conduit_lwt.Flow (flow, (module F)) = pack in
+    F.close flow >|= Result.get_ok >>= fun () ->
+    (* Conduit OO *)
     print_endline "Conduit_oo";
     let flow = Conduit_oo.create_data () in
     test_conduit_oo flow >>= fun () ->
     Conduit_oo.close flow >|= Result.get_ok >>= fun () ->
+    print_endline "adaptor";
+    Adaptor.create_data () >>= fun flow ->
+    test_conduit_oo flow >>= fun () ->
+    Conduit_oo.close flow >|= Result.get_ok >>= fun () ->
+    print_endline "adaptor_unwrap";
+    Adaptor.create_data () >>= fun flow ->
+    Adaptor.unwrap flow |> Option.get |> test_conduit_impl >>= fun () ->
+    Conduit_oo.close flow >|= Result.get_ok >>= fun () ->
+    (* Flow OO *)
     print_endline "Flow_oo";
     let flow = Flow_oo.create_data () in
     test_flow_oo flow >>= fun () ->
@@ -140,12 +181,17 @@ let () =
       Bench.Test.create ~name:"mirage_flow_null" (fun () -> Test_mirage_flow_null.test ());
       Bench.Test.create ~name:"conduit_null" (fun () -> test_conduit conduit_null);
       Bench.Test.create ~name:"conduit_oo_null" (fun () -> test_conduit_oo Conduit_oo.null);
+      Bench.Test.create ~name:"adaptor_null" (fun () -> test_conduit_oo Adaptor.null);
+      Bench.Test.create ~name:"adaptor_null_unwrap" (fun () -> test_conduit_impl (Option.get (Adaptor.unwrap Adaptor.null)));
       Bench.Test.create ~name:"oo_null" (fun () -> test_flow_oo Flow_oo.null);
       Bench.Test.create ~name:"oo_null2" (fun () -> test_flow_oo2 Flow_oo.null);
 
       Bench.Test.create ~name:"mirage_flow_data" (fun () -> Test_mirage_flow_data.test (Mirage_flow_data.create ()));
       Bench.Test.create ~name:"conduit_data" (fun () -> Conduit_data.create () >>= test_conduit);
+      Bench.Test.create ~name:"conduit_data_unwrap" (fun () -> Conduit_data.create_impl () >>= test_conduit_impl);
       Bench.Test.create ~name:"conduit_oo_data" (fun () -> test_conduit_oo (Conduit_oo.create_data ()));
+      Bench.Test.create ~name:"adaptor_data" (fun () -> Adaptor.create_data () >>= test_conduit_oo);
+      Bench.Test.create ~name:"adaptor_data_unwrap" (fun () -> Adaptor.create_data () >|= Adaptor.unwrap >|= Option.get >>= test_conduit_impl);
       Bench.Test.create ~name:"oo_data" (fun () -> test_flow_oo (Flow_oo.create_data ()));
       Bench.Test.create ~name:"oo_data2" (fun () -> test_flow_oo2 (Flow_oo.create_data ()));
     ])

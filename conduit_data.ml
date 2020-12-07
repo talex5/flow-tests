@@ -51,3 +51,9 @@ let create () =
   | Error (`Msg m) -> failwith m
   | Error `Not_found -> failwith "Not found"
   | Ok x -> x
+
+let create_impl () =
+  Conduit_lwt.connect () t >|= function
+  | Error (`Msg m) -> failwith m
+  | Error `Not_found -> failwith "Not found"
+  | Ok x -> Conduit_lwt.unpack x
